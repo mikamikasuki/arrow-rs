@@ -1536,7 +1536,11 @@ impl ArrayData {
                     let child_nulls = child.nulls().map(|nulls| {
                         nulls.slice(self.offset * element_len, self.len * element_len)
                     });
-                    let expanded = self.nulls.as_ref().map(|nulls| nulls.expand(element_len));
+                    let expanded = child_nulls
+                        .as_ref()
+                        .filter(|nulls| nulls.null_count() > 0)
+                        .and(self.nulls.as_ref())
+                        .map(|nulls| nulls.expand(element_len));
                     self.validate_non_nullable(expanded.as_ref(), child, child_nulls.as_ref())?;
                 }
             }
