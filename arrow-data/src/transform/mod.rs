@@ -23,7 +23,9 @@
 use super::{ArrayData, ArrayDataBuilder, ByteView, data::new_buffers};
 use crate::bit_mask::set_bits;
 use arrow_buffer::buffer::{BooleanBuffer, NullBuffer};
-use arrow_buffer::{ArrowNativeType, Buffer, IntervalMonthDayNano, MutableBuffer, bit_util, i256};
+use arrow_buffer::{
+    ArrowNativeType, Buffer, IntervalDayTime, IntervalMonthDayNano, MutableBuffer, bit_util, i256,
+};
 use arrow_schema::{ArrowError, DataType, IntervalUnit, UnionMode};
 use half::f16;
 use num_integer::Integer;
@@ -259,8 +261,10 @@ fn build_extend(array: &ArrayData) -> Extend<'_> {
         DataType::Date64
         | DataType::Time64(_)
         | DataType::Timestamp(_, _)
-        | DataType::Duration(_)
-        | DataType::Interval(IntervalUnit::DayTime) => primitive::build_extend::<i64>(array),
+        | DataType::Duration(_) => primitive::build_extend::<i64>(array),
+        DataType::Interval(IntervalUnit::DayTime) => {
+            primitive::build_extend::<IntervalDayTime>(array)
+        }
         DataType::Interval(IntervalUnit::MonthDayNano) => {
             primitive::build_extend::<IntervalMonthDayNano>(array)
         }
@@ -1022,6 +1026,30 @@ mod test {
         let mut mutable = MutableArrayData::new(vec![&array], true, 3);
         mutable.try_extend_nulls(1).unwrap();
         assert_eq!(mutable.len(), 1);
+    }
+
+    #[test]
+    fn test_day_time_interval_accepts_native_alignment_when_extending() {
+        use arrow_buffer::IntervalDayTime;
+        use arrow_schema::IntervalUnit;
+
+        // Interval(DayTime) is a pair of i32 values and only requires 4-byte
+        // alignment. The buffer starts at 4 mod 8 to catch an i64 read.
+        let values = Buffer::from_slice_ref([0_i32, 1, 2]).slice(4);
+        let source = ArrayData::builder(DataType::Interval(IntervalUnit::DayTime))
+            .len(1)
+            .add_buffer(values)
+            .build()
+            .unwrap();
+
+        let mut mutable = MutableArrayData::new(vec![&source], false, 1);
+        mutable.try_extend(0, 0, 1).unwrap();
+        let result = mutable.freeze();
+
+        assert_eq!(
+            result.buffer::<IntervalDayTime>(0),
+            &[IntervalDayTime::new(1, 2)]
+        );
     }
 
     #[test]
